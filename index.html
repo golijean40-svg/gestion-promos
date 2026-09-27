@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>Gestion des promos</title>
+<link rel="manifest" href="manifest.json" />
+<meta name="theme-color" content="#EEF1F4" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+<meta name="apple-mobile-web-app-title" content="Promos" />
+<link rel="apple-touch-icon" href="icon-192.png" />
+<style>
+  :root {
+    --ink: #1A2433;
+    --muted: #667085;
+    --bg: #EEF1F4;
+    --surface: #FFFFFF;
+    --border: #DDE2E8;
+    --accent: #1F4E79;
+    --tag: #8A6116;
+    --warn: #A6432E;
+    --ok: #2F5D45;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  .wrap { max-width: 780px; margin: 0 auto; padding: 20px 16px 70px; }
+  .topbar { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding-bottom: 16px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .brand-name { font-size: 18px; font-weight: 700; letter-spacing: -.2px; }
+  .brand-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .export-col { display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; gap: 10px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 14px 16px; }
+  .btn { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 12px; border-radius: 4px; border: 1px solid var(--border); font-size: 13px; font-weight: 600; cursor: pointer; background: var(--surface); color: var(--ink); }
+  .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; width: 100%; padding: 10px 14px; font-size: 14px; }
+  input[type=text], input[type=date], select {
+    width: 100%; padding: 8px 10px; border-radius: 4px; border: 1px solid var(--border);
+    font-size: 14px; font-family: inherit; background: var(--surface); color: var(--ink);
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label.small { display: block; font-size: 11.5px; font-weight: 600; color: var(--muted); margin-bottom: 4px; }
+  .field { flex: 1; min-width: 0; }
+  .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin-bottom: 22px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 12px 14px; }
+  .kpi .kpi-label { font-size: 11.5px; color: var(--muted); margin-bottom: 4px; }
+  .kpi .kpi-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kpi .kpi-value.warn { color: var(--warn); }
+  .kpi .kpi-value.good { color: var(--ok); }
+  .section-title { font-size: 14px; font-weight: 700; margin: 22px 0 10px; padding-left: 10px; border-left: 3px solid var(--accent); }
+  .reminder-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--tag); background: #FBF3E2; border: 1px solid #EBD9A8; border-radius: 4px; padding: 9px 12px; margin-bottom: 10px; }
+  .promo-card { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 4px; padding: 14px 16px; margin-bottom: 10px; background: var(--surface); }
+  .promo-card.status-cours { border-left-color: var(--ok); }
+  .promo-card.status-venir { border-left-color: var(--accent); }
+  .promo-card.status-finie { border-left-color: var(--muted); opacity: 0.7; }
+  .promo-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px; }
+  .status-chip { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+  .status-chip.cours { background: #E7F0EA; color: var(--ok); }
+  .status-chip.venir { background: #E5EDF3; color: var(--accent); }
+  .status-chip.finie { background: #EEE; color: var(--muted); }
+  .del { border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; padding: 4px 9px; border-radius: 4px; }
+  .stat-block .stat-lbl { font-size: 10.5px; font-weight: 700; color: var(--muted); margin-bottom: 3px; }
+  .stat-block .stat-val { font-size: 14px; font-weight: 700; }
+  .old-price { font-size: 11px; text-decoration: line-through; color: var(--muted); font-weight: 500; margin-right: 3px; }
+  .note { font-size: 12.5px; color: var(--muted); }
+  .analysis { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
+  .analysis .title { font-weight: 700; font-size: 12.5px; margin-bottom: 3px; }
+  .warn-text { color: var(--warn); }
+  @media print {
+    .no-print { display: none !important; }
+    body { background: #fff !important; }
+    .wrap { padding: 0 !important; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap" id="root"></div>
+
+<script>
+const STORAGE_KEY = "promo_products_v1";
+const SAFETY_KEY = "promo_safety_margin_v1";
+
+// Réutilise la même table de référence conservation que le comparateur de prix.
+// Températures alignées sur les recommandations professionnelles CTIFL (Centre
+// technique interprofessionnel des fruits et légumes) quand le produit y figure ;
+// estimées par analogie avec la famille la plus proche sinon.
+const PRODUITS_CONSERVATION = {
+  "Carotte": { jours: 14, temp: "4 à 8°C" }, "Carotte jaune": { jours: 14, temp: "4 à 8°C" }, "Carotte violette": { jours: 14, temp: "4 à 8°C" },
+  "Betterave rouge": { jours: 14, temp: "2 à 7°C" }, "Betterave jaune": { jours: 14, temp: "2 à 7°C" },
+  "Navet": { jours: 14, temp: "4 à 8°C" }, "Rutabaga": { jours: 21, temp: "2 à 7°C" }, "Panais": { jours: 14, temp: "2 à 7°C" },
+  "Radis rose": { jours: 7, temp: "4 à 8°C" }, "Radis noir": { jours: 14, temp: "4 à 8°C" }, "Céleri-rave": { jours: 14, temp: "4 à 8°C" },
+  "Topinambour": { jours: 10, temp: "2 à 7°C" }, "Salsifis": { jours: 7, temp: "2 à 7°C" },
+  "Patate douce": { jours: 30, temp: "12 à 15°C" }, "Igname": { jours: 30, temp: "12 à 16°C" }, "Manioc": { jours: 5, temp: "8 à 12°C" },
+  "Taro": { jours: 14, temp: "8 à 12°C" }, "Pomme de terre": { jours: 60, temp: "6 à 9°C, à l'obscurité" },
+  "Tomate rouge": { jours: 7, temp: "12 à 15°C" }, "Tomate cerise": { jours: 7, temp: "12 à 15°C" }, "Tomate jaune": { jours: 7, temp: "12 à 15°C" },
+  "Tomate verte": { jours: 7, temp: "12 à 15°C" }, "Tomate noire (Kumato)": { jours: 7, temp: "12 à 15°C" },
+  "Aubergine violette": { jours: 7, temp: "8 à 12°C" }, "Aubergine blanche": { jours: 7, temp: "8 à 12°C" },
+  "Poivron rouge": { jours: 10, temp: "8 à 12°C" }, "Poivron jaune": { jours: 10, temp: "8 à 12°C" }, "Poivron vert": { jours: 10, temp: "8 à 12°C" }, "Poivron orange": { jours: 10, temp: "8 à 12°C" },
+  "Piment fort": { jours: 10, temp: "8 à 12°C" }, "Piment oiseau": { jours: 10, temp: "8 à 12°C" },
+  "Courgette verte": { jours: 7, temp: "8 à 12°C" }, "Courgette jaune": { jours: 7, temp: "8 à 12°C" },
+  "Concombre": { jours: 7, temp: "10 à 12°C" }, "Cornichon": { jours: 5, temp: "10 à 12°C" },
+  "Potiron": { jours: 90, temp: "13 à 18°C" }, "Potimarron": { jours: 60, temp: "13 à 18°C" }, "Butternut": { jours: 60, temp: "13 à 18°C" },
+  "Citrouille": { jours: 90, temp: "13 à 18°C" }, "Chayotte": { jours: 21, temp: "13 à 18°C" },
+  "Oignon jaune": { jours: 60, temp: "15 à 18°C, au sec" }, "Oignon rouge": { jours: 60, temp: "15 à 18°C, au sec" }, "Oignon blanc": { jours: 15, temp: "0 à 4°C (frais, non séché)" },
+  "Échalote": { jours: 60, temp: "8 à 12°C, au sec" }, "Ail blanc": { jours: 90, temp: "15 à 18°C, au sec" }, "Ail rose": { jours: 90, temp: "15 à 18°C, au sec" },
+  "Poireau": { jours: 10, temp: "4 à 8°C" }, "Ciboulette": { jours: 5, temp: "4 à 8°C" },
+  "Chou blanc": { jours: 21, temp: "6 à 10°C" }, "Chou rouge": { jours: 21, temp: "6 à 10°C" }, "Chou vert": { jours: 14, temp: "6 à 10°C" },
+  "Chou de Bruxelles": { jours: 10, temp: "6 à 10°C" }, "Chou frisé (kale)": { jours: 7, temp: "4 à 8°C" },
+  "Chou-fleur blanc": { jours: 7, temp: "6 à 10°C" }, "Chou-fleur violet": { jours: 7, temp: "6 à 10°C" }, "Chou romanesco": { jours: 7, temp: "6 à 10°C" },
+  "Brocoli": { jours: 5, temp: "2 à 8°C" }, "Brocoli violet": { jours: 5, temp: "2 à 8°C" },
+  "Chou chinois": { jours: 10, temp: "6 à 10°C" }, "Chou-rave": { jours: 14, temp: "4 à 8°C" }, "Pak-choï": { jours: 5, temp: "4 à 8°C" },
+  "Salade laitue": { jours: 5, temp: "4 à 8°C" }, "Batavia": { jours: 5, temp: "4 à 8°C" }, "Roquette": { jours: 3, temp: "2 à 7°C" },
+  "Mâche": { jours: 3, temp: "2 à 7°C" }, "Épinard": { jours: 3, temp: "2 à 8°C" }, "Blette": { jours: 5, temp: "2 à 7°C" },
+  "Cresson": { jours: 3, temp: "2 à 7°C" }, "Endive": { jours: 7, temp: "4 à 8°C, à l'abri de la lumière" }, "Chicorée": { jours: 7, temp: "4 à 8°C" },
+  "Haricot vert": { jours: 5, temp: "8 à 12°C" }, "Haricot beurre": { jours: 5, temp: "8 à 12°C" }, "Petit pois": { jours: 3, temp: "4 à 8°C" },
+  "Fève": { jours: 5, temp: "2 à 7°C" }, "Pois mange-tout": { jours: 5, temp: "4 à 8°C" }, "Pois gourmand": { jours: 5, temp: "4 à 8°C" },
+  "Céleri branche": { jours: 14, temp: "4 à 8°C" }, "Fenouil": { jours: 7, temp: "4 à 8°C" }, "Rhubarbe": { jours: 7, temp: "2 à 7°C" },
+  "Cardon": { jours: 7, temp: "4 à 8°C" }, "Asperge blanche": { jours: 4, temp: "4 à 8°C" }, "Asperge verte": { jours: 4, temp: "4 à 8°C" },
+  "Asperge violette": { jours: 4, temp: "4 à 8°C" }, "Artichaut": { jours: 7, temp: "6 à 10°C" },
+  "Maïs doux": { jours: 3, temp: "4 à 8°C" }, "Champignon de Paris": { jours: 5, temp: "1 à 4°C" }, "Champignon shiitake": { jours: 5, temp: "1 à 4°C" },
+  "Champignon pleurote": { jours: 4, temp: "1 à 4°C" }, "Gingembre frais": { jours: 21, temp: "10 à 15°C" }, "Curcuma frais": { jours: 21, temp: "10 à 15°C" },
+  "Gombo (okra)": { jours: 5, temp: "8 à 12°C" },
+  "Pomme": { jours: 30, temp: "8 à 12°C" }, "Pomme verte": { jours: 30, temp: "8 à 12°C" }, "Poire": { jours: 14, temp: "8 à 12°C" },
+  "Coing": { jours: 30, temp: "2 à 7°C" }, "Nashi": { jours: 21, temp: "8 à 12°C" },
+  "Orange": { jours: 21, temp: "8 à 12°C" }, "Orange sanguine": { jours: 21, temp: "8 à 12°C" }, "Clémentine": { jours: 14, temp: "8 à 12°C" },
+  "Mandarine": { jours: 14, temp: "8 à 12°C" }, "Citron jaune": { jours: 21, temp: "8 à 12°C" }, "Citron vert": { jours: 14, temp: "8 à 12°C" },
+  "Pamplemousse": { jours: 21, temp: "12 à 15°C" }, "Pomelo": { jours: 21, temp: "12 à 15°C" }, "Combava": { jours: 14, temp: "8 à 12°C" }, "Kumquat": { jours: 14, temp: "8 à 12°C" },
+  "Pêche": { jours: 5, temp: "8 à 12°C" }, "Nectarine": { jours: 5, temp: "8 à 12°C" },
+  "Abricot": { jours: 5, temp: "8 à 12°C (4 à 8°C une fois bien mûr)" },
+  "Prune": { jours: 5, temp: "8 à 12°C" }, "Reine-claude": { jours: 5, temp: "8 à 12°C" }, "Cerise rouge": { jours: 5, temp: "4 à 8°C" }, "Cerise noire": { jours: 5, temp: "4 à 8°C" },
+  "Fraise": { jours: 3, temp: "4 à 8°C" }, "Framboise": { jours: 2, temp: "2 à 7°C" }, "Myrtille": { jours: 7, temp: "2 à 7°C" },
+  "Mûre": { jours: 3, temp: "2 à 7°C" }, "Groseille": { jours: 5, temp: "2 à 7°C" }, "Groseille à maquereau": { jours: 5, temp: "2 à 7°C" },
+  "Cassis": { jours: 5, temp: "2 à 7°C" }, "Cranberry": { jours: 14, temp: "2 à 7°C" }, "Physalis": { jours: 14, temp: "4 à 8°C" },
+  "Raisin blanc": { jours: 7, temp: "4 à 8°C" }, "Raisin noir": { jours: 7, temp: "4 à 8°C" }, "Raisin muscat": { jours: 7, temp: "4 à 8°C" },
+  "Melon charentais": { jours: 7, temp: "8 à 12°C" }, "Melon galia": { jours: 7, temp: "8 à 12°C" }, "Pastèque": { jours: 14, temp: "8 à 12°C" }, "Pastèque jaune": { jours: 14, temp: "8 à 12°C" },
+  "Banane jaune": { jours: 5, temp: "13 à 18°C, jamais au frigo" }, "Banane plantain": { jours: 7, temp: "13 à 18°C" },
+  "Mangue": { jours: 5, temp: "13 à 15°C" }, "Papaye": { jours: 5, temp: "12 à 15°C" }, "Ananas": { jours: 5, temp: "8 à 12°C" },
+  "Kiwi vert": { jours: 21, temp: "8 à 12°C" }, "Kiwi jaune": { jours: 14, temp: "8 à 12°C" }, "Fruit de la passion": { jours: 14, temp: "12 à 15°C" },
+  "Litchi": { jours: 7, temp: "6 à 10°C" }, "Ramboutan": { jours: 5, temp: "6 à 10°C" }, "Longane": { jours: 5, temp: "6 à 10°C" }, "Goyave": { jours: 5, temp: "12 à 15°C" },
+  "Grenade": { jours: 21, temp: "8 à 12°C" }, "Figue": { jours: 3, temp: "2 à 7°C" }, "Figue de Barbarie": { jours: 7, temp: "8 à 12°C" },
+  "Corossol": { jours: 5, temp: "12 à 15°C" }, "Carambole": { jours: 7, temp: "12 à 15°C" }, "Jacquier": { jours: 5, temp: "12 à 15°C" },
+  "Fruit du dragon (pitaya)": { jours: 7, temp: "12 à 15°C" }, "Tamarillo": { jours: 14, temp: "8 à 12°C" }, "Kaki (plaquemine)": { jours: 7, temp: "4 à 8°C" },
+  "Datte fraîche": { jours: 30, temp: "0 à 4°C" }, "Noix de coco": { jours: 30, temp: "13 à 18°C" }, "Avocat": { jours: 5, temp: "8 à 12°C (4 à 7°C une fois mûr)" },
+};
+const PRODUITS_NOMS = Object.keys(PRODUITS_CONSERVATION).sort((a, b) => a.localeCompare(b, "fr"));
+
+let products = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || [];
+let safetyMargin = localStorage.getItem(SAFETY_KEY) || "15";
+let editingId = null;
+
+function save() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+  localStorage.setItem(SAFETY_KEY, safetyMargin);
+}
+
+function num(v) {
+  const n = parseFloat(String(v).replace(",", "."));
+  return isFinite(n) ? n : null;
+}
+function euro(v) {
+  const n = num(v);
+  return n === null ? "—" : n.toFixed(2).replace(".", ",") + " €";
+}
+function pct(v) { return v.toFixed(1).replace(".", ",") + " %"; }
+function val(id) { const el = document.getElementById(id); return el ? el.value : ""; }
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+function daysBetween(d1, d2) { return Math.round((new Date(d2) - new Date(d1)) / 86400000); }
+
+function optionsHtml(list, selectedValue) {
+  return list.map(o => `<option value="${o}" ${o === selectedValue ? "selected" : ""}>${o}</option>`).join("")
+    + `<option value="__autre__" ${selectedValue === "__autre__" ? "selected" : ""}>Autre…</option>`;
+}
+function nameFieldHtml(currentName) {
+  const inList = currentName && PRODUITS_NOMS.includes(currentName);
+  const selectVal = currentName ? (inList ? currentName : "__autre__") : "";
+  const customVal = currentName && !inList ? currentName : "";
+  return `<div class="field">
+    <label class="small">Nom du produit</label>
+    <select id="f-name-select" onchange="onNameSelectChange(this)">
+      <option value="" ${selectVal === "" ? "selected" : ""}>—</option>
+      ${optionsHtml(PRODUITS_NOMS, selectVal)}
+    </select>
+    <input type="text" id="f-name-custom" value="${customVal}" placeholder="Préciser le nom du produit" style="display:${customVal ? "block" : "none"};margin-top:6px;" />
+  </div>`;
+}
+function onNameSelectChange(selectEl) {
+  const custom = document.getElementById("f-name-custom");
+  custom.style.display = selectEl.value === "__autre__" ? "block" : "none";
+  if (selectEl.value !== "__autre__") custom.value = "";
+}
+function selectedName() {
+  const sel = val("f-name-select");
+  return sel === "__autre__" ? val("f-name-custom").trim() : sel;
+}
+
+function computeStatus(p) {
+  const today = todayStr();
+  if (!p.dateDebut || !p.dateFin) return { statut: "inconnu", joursRestants: null };
+  if (today < p.dateDebut) return { statut: "venir", joursRestants: daysBetween(today, p.dateDebut) };
+  if (today > p.dateFin) return { statut: "finie", joursRestants: null };
+  return { statut: "cours", joursRestants: daysBetween(today, p.dateFin) };
+}
+
+function computeStockAdvice(p) {
+  const venteJour = num(p.venteJour);
+  const dureePromo = p.dateDebut && p.dateFin ? daysBetween(p.dateDebut, p.dateFin) + 1 : null;
+  const conservation = PRODUITS_CONSERVATION[p.name] ? PRODUITS_CONSERVATION[p.name].jours : num(p.conservationManuelle);
+  const margeSecurite = num(safetyMargin) ?? 15;
+  if (venteJour === null || venteJour <= 0 || dureePromo === null || conservation === null) return null;
+
+  const besoinNormalPromo = Math.ceil(venteJour * dureePromo);
+  const joursDisponiblesApresPromo = Math.max(0, conservation - dureePromo);
+  const stockSupplementaire = Math.floor(joursDisponiblesApresPromo * venteJour * (1 - margeSecurite / 100));
+  const total = besoinNormalPromo + stockSupplementaire;
+  const risque = conservation <= dureePromo;
+  return { dureePromo, conservation, besoinNormalPromo, stockSupplementaire, total, risque, joursDisponiblesApresPromo };
+}
+
+function addProduct() {
+  const name = selectedName();
+  const achatNormal = val("f-achat-normal");
+  const achatPromo = val("f-achat-promo");
+  const venteNormal = val("f-vente-normal");
+  const ventePromo = val("f-vente-promo");
+  const dateDebut = val("f-date-debut");
+  const dateFin = val("f-date-fin");
+  const venteJour = val("f-vente-jour");
+  if (!name || !achatNormal || !venteNormal || !ventePromo || !dateDebut || !dateFin) return;
+
+  const data = { name, achatNormal, achatPromo, venteNormal, ventePromo, dateDebut, dateFin, venteJour };
+
+  if (editingId !== null) {
+    const idx = products.findIndex(p => p.id === editingId);
+    if (idx !== -1) products[idx] = { id: editingId, ...data };
+    editingId = null;
+  } else {
+    products.push({ id: Date.now(), ...data });
+  }
+  save();
+  render();
+}
+
+function editProduct(id) {
+  editingId = id;
+  render();
+  const panel = document.getElementById("form-panel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+function cancelEdit() { editingId = null; render(); }
+function removeProduct(id) {
+  products = products.filter(p => p.id !== id);
+  save();
+  render();
+}
+
+function downloadBlob(content, filename, mime) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+function exportDataJson() {
+  downloadBlob(JSON.stringify({ products, safetyMargin, exportedAt: new Date().toISOString() }, null, 2),
+    `promos-${todayStr()}.json`, "application/json");
+}
+function triggerImport() { document.getElementById("import-file-input").click(); }
+function importDataJson(fileInput) {
+  const file = fileInput.files && fileInput.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!Array.isArray(data.products)) throw new Error("format invalide");
+      if (!confirm(`Importer ${data.products.length} promo(s) ? Cela remplacera tes données actuelles.`)) return;
+      products = data.products;
+      if (data.safetyMargin) safetyMargin = data.safetyMargin;
+      save(); render();
+    } catch (e) { alert("Fichier invalide."); }
+    fileInput.value = "";
+  };
+  reader.readAsText(file);
+}
+function csvField(v) { return `"${String(v == null ? "" : v).replace(/"/g, '""')}"`; }
+function exportCsv() {
+  const rows = [["Produit","Achat normal","Achat promo","Vente normal","Vente promo","Début","Fin","Statut","Vente/jour","Stock supplémentaire conseillé","Total à commander"]];
+  products.forEach(p => {
+    const s = computeStatus(p);
+    const adv = computeStockAdvice(p);
+    rows.push([p.name, p.achatNormal, p.achatPromo, p.venteNormal, p.ventePromo, p.dateDebut, p.dateFin,
+      s.statut, p.venteJour, adv ? adv.stockSupplementaire : "", adv ? adv.total : ""]);
+  });
+  const csv = "\uFEFF" + rows.map(r => r.map(csvField).join(";")).join("\r\n");
+  downloadBlob(csv, `promos-${todayStr()}.csv`, "text/csv;charset=utf-8;");
+}
+function onSafetyChange(v) { safetyMargin = v; save(); render(); }
+
+function statusLabel(s) {
+  if (s === "cours") return "En cours";
+  if (s === "venir") return "À venir";
+  if (s === "finie") return "Terminée";
+  return "—";
+}
+
+function render() {
+  const activeEl = document.activeElement;
+  const activeId = activeEl && activeEl.id ? activeEl.id : null;
+  const selStart = activeId && typeof activeEl.selectionStart === "number" ? activeEl.selectionStart : null;
+  const selEnd = activeId && typeof activeEl.selectionEnd === "number" ? activeEl.selectionEnd : null;
+
+  const enriched = products.map(p => ({ ...p, s: computeStatus(p), adv: computeStockAdvice(p) }));
+  const order = { cours: 0, venir: 1, inconnu: 2, finie: 3 };
+  enriched.sort((a, b) => (order[a.s.statut] - order[b.s.statut]) || a.name.localeCompare(b.name, "fr"));
+
+  const enCours = enriched.filter(p => p.s.statut === "cours");
+  const aVenir = enriched.filter(p => p.s.statut === "venir");
+  const aReappro = enriched.filter(p => p.adv && p.adv.stockSupplementaire > 0);
+
+  let html = "";
+
+  html += `<div class="topbar">
+    <div>
+      <div class="brand-name">Gestion des promos</div>
+      <div class="brand-sub">Suivi des promotions & stock à anticiper</div>
+    </div>
+    <div class="export-col no-print">
+      <button class="btn" onclick="window.print()">Export PDF</button>
+      <button class="btn" onclick="exportCsv()">Export CSV</button>
+    </div>
+  </div>`;
+
+  html += `<div class="row no-print" style="gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+    <button class="btn" onclick="exportDataJson()">Sauvegarder mes données</button>
+    <button class="btn" onclick="triggerImport()">Importer une sauvegarde</button>
+    <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="importDataJson(this)" />
+  </div>`;
+
+  // Rappels
+  enriched.forEach(p => {
+    if (p.s.statut === "cours" && p.s.joursRestants !== null && p.s.joursRestants <= 1) {
+      html += `<div class="reminder-banner no-print"><span>${p.name} : la promo se termine ${p.s.joursRestants === 0 ? "aujourd'hui" : "demain"} — dernier moment pour compléter ton stock au prix promo si besoin.</span></div>`;
+    }
+    if (p.s.statut === "venir" && p.s.joursRestants !== null && p.s.joursRestants <= 1) {
+      html += `<div class="reminder-banner no-print"><span>${p.name} : la promo commence ${p.s.joursRestants === 0 ? "aujourd'hui" : "demain"} — pense à passer la commande supplémentaire.</span></div>`;
+    }
+  });
+
+  html += `<div class="kpi-grid">
+    <div class="kpi"><div class="kpi-label">Promos en cours</div><div class="kpi-value good">${enCours.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Promos à venir</div><div class="kpi-value">${aVenir.length}</div></div>
+    <div class="kpi"><div class="kpi-label">À réapprovisionner</div><div class="kpi-value ${aReappro.length > 0 ? "warn" : "good"}">${aReappro.length}</div></div>
+  </div>`;
+
+  html += `<div class="row no-print" style="align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+    <label style="font-size:13px;color:var(--muted);">Marge de sécurité stock (%)</label>
+    <input type="text" id="safety-input" value="${safetyMargin}" oninput="onSafetyChange(this.value)" style="width:56px;text-align:center;padding:6px 8px;" />
+  </div>`;
+
+  const editingProduct = editingId !== null ? products.find(p => p.id === editingId) : null;
+  html += `<div id="form-panel">
+  <div class="section-title no-print">${editingProduct ? "Modifier la promo" : "Ajouter une promo"}</div>
+  <div class="card no-print" style="margin-bottom:24px;">
+    <div class="row" style="flex-direction:column;gap:10px;">
+      ${nameFieldHtml(editingProduct ? editingProduct.name : "")}
+      <div class="row">
+        <div class="field"><label class="small">Achat prix normal (€)</label><input type="text" id="f-achat-normal" value="${editingProduct ? editingProduct.achatNormal : ""}" placeholder="0.00" inputmode="decimal" /></div>
+        <div class="field"><label class="small">Achat prix promo (€)</label><input type="text" id="f-achat-promo" value="${editingProduct ? editingProduct.achatPromo : ""}" placeholder="0.00" inputmode="decimal" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="small">Vente prix normal (€)</label><input type="text" id="f-vente-normal" value="${editingProduct ? editingProduct.venteNormal : ""}" placeholder="0.00" inputmode="decimal" /></div>
+        <div class="field"><label class="small">Vente prix promo (€)</label><input type="text" id="f-vente-promo" value="${editingProduct ? editingProduct.ventePromo : ""}" placeholder="0.00" inputmode="decimal" /></div>
+      </div>
+      <div class="row">
+        <div class="field"><label class="small">Début de la promo</label><input type="date" id="f-date-debut" value="${editingProduct ? editingProduct.dateDebut : ""}" /></div>
+        <div class="field"><label class="small">Fin de la promo</label><input type="date" id="f-date-fin" value="${editingProduct ? editingProduct.dateFin : ""}" /></div>
+      </div>
+      <div class="field"><label class="small">Vente moyenne par jour (unités)</label><input type="text" id="f-vente-jour" value="${editingProduct ? editingProduct.venteJour : ""}" placeholder="ex. 1" inputmode="numeric" /></div>
+      <div class="row">
+        <button class="btn btn-primary" onclick="addProduct()">${editingProduct ? "Enregistrer les modifications" : "Ajouter la promo"}</button>
+        ${editingProduct ? `<button class="btn" style="flex:0 0 100px;" onclick="cancelEdit()">Annuler</button>` : ""}
+      </div>
+    </div>
+  </div>
+  </div>`;
+
+  html += `<div class="section-title">Promotions suivies</div>`;
+  if (enriched.length === 0) {
+    html += `<div class="note" style="text-align:center;padding:20px 0;">Ajoute une promo ci-dessus.</div>`;
+  }
+  enriched.forEach(p => {
+    const s = p.s;
+    const adv = p.adv;
+    const conservationRef = PRODUITS_CONSERVATION[p.name];
+    const margeNormale = num(p.achatNormal) !== null && num(p.venteNormal) !== null && num(p.venteNormal) > 0
+      ? ((num(p.venteNormal) - num(p.achatNormal)) / num(p.venteNormal)) * 100 : null;
+    const margePromo = num(p.achatPromo || p.achatNormal) !== null && num(p.ventePromo) !== null && num(p.ventePromo) > 0
+      ? ((num(p.ventePromo) - num(p.achatPromo || p.achatNormal)) / num(p.ventePromo)) * 100 : null;
+
+    html += `<div class="promo-card status-${s.statut}">
+      <div class="promo-top">
+        <div>
+          <div style="font-size:14.5px;font-weight:700;">${p.name}</div>
+          <div class="note">${p.dateDebut} → ${p.dateFin}${s.joursRestants !== null ? ` · ${s.statut === "venir" ? "dans " + s.joursRestants + " j" : s.joursRestants + " j restant(s)"}` : ""}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="status-chip ${s.statut}">${statusLabel(s.statut)}</span>
+          <div class="row no-print" style="gap:6px;">
+            <button class="del" onclick="editProduct(${p.id})">Modifier</button>
+            <button class="del" onclick="removeProduct(${p.id})">Supprimer</button>
+          </div>
+        </div>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:20px;">
+        <div class="stat-block">
+          <div class="stat-lbl">Achat</div>
+          <div class="stat-val">${p.achatPromo ? `<span class="old-price">${euro(p.achatNormal)}</span>${euro(p.achatPromo)}` : euro(p.achatNormal)}</div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-lbl">Vente</div>
+          <div class="stat-val"><span class="old-price">${euro(p.venteNormal)}</span>${euro(p.ventePromo)}</div>
+        </div>
+        <div class="stat-block">
+          <div class="stat-lbl">Marge normale → promo</div>
+          <div class="stat-val">${margeNormale !== null ? pct(margeNormale) : "—"} → ${margePromo !== null ? pct(margePromo) : "—"}</div>
+        </div>
+      </div>
+      ${adv ? `
+      <div class="analysis">
+        <div class="title">Anticipation de stock</div>
+        ${adv.risque
+          ? `<div class="note warn-text">Conservation (${adv.conservation}j) trop courte pour la durée de la promo (${adv.dureePromo}j) — commande juste le nécessaire : ${adv.besoinNormalPromo} unité(s), pas de surplus sûr.</div>`
+          : `<div class="note">Commande pour la promo : <b>${adv.besoinNormalPromo}</b> · Stock supplémentaire prudent : <b>${adv.stockSupplementaire}</b> · Total conseillé : <b>${adv.total} unité(s)</b></div>`}
+        ${conservationRef ? `<div class="note">Référence conservation : ${conservationRef.jours}j à ${conservationRef.temp}</div>` : ""}
+      </div>` : `<div class="analysis"><div class="note">Renseigne la vente moyenne/jour pour obtenir une recommandation de stock.</div></div>`}
+    </div>`;
+  });
+
+  document.getElementById("root").innerHTML = html;
+
+  if (activeId) {
+    const el = document.getElementById(activeId);
+    if (el) {
+      el.focus();
+      if (selStart !== null && el.setSelectionRange) { try { el.setSelectionRange(selStart, selEnd); } catch (e) {} }
+    }
+  }
+}
+
+render();
+
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
