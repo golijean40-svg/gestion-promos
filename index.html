@@ -396,28 +396,32 @@ function findVenteRefForName(name) {
 }
 
 function computeReappro(entry) {
-  const stock = num(entry.stock);
-  if (stock === null || stock < 0) return null;
+  const stockTotal = num(entry.stock);
+  const miseEnRayon = num(entry.miseEnRayon) ?? 0;
+  if (stockTotal === null || stockTotal < 0) return null;
+  // Ce qui reste réellement disponible pour la suite, une fois la mise en rayon
+  // d'aujourd'hui déjà sortie du stock total saisi.
+  const stockRestant = Math.max(0, stockTotal - miseEnRayon);
   const venteRef = num(entry.venteJourRef);
   const conservation = PRODUITS_CONSERVATION[entry.name] ? PRODUITS_CONSERVATION[entry.name].jours : null;
 
   let recommandation, alerteRotation = false, joursAvantRupture = null;
   if (venteRef === null || venteRef <= 0) {
     // Pas de rythme de vente connu : on ne peut que proposer de sortir tout le stock restant.
-    recommandation = stock;
+    recommandation = stockRestant;
   } else {
-    recommandation = Math.min(stock, Math.ceil(venteRef * 1.1)); // +10% de présentation
-    joursAvantRupture = Math.floor(stock / venteRef);
-    if (conservation !== null && venteRef > 0 && stock / venteRef > conservation) {
+    recommandation = Math.min(stockRestant, Math.ceil(venteRef * 1.1)); // +10% de présentation
+    joursAvantRupture = venteRef > 0 ? Math.floor(stockRestant / venteRef) : null;
+    if (conservation !== null && venteRef > 0 && stockRestant / venteRef > conservation) {
       // Le stock restant tiendrait plus longtemps que sa conservation : il faut
       // accélérer l'écoulement pour éviter la démarque, même si ça dépasse le
       // rythme de vente habituel.
-      recommandation = Math.min(stock, Math.ceil(stock / Math.max(1, conservation - 1)));
+      recommandation = Math.min(stockRestant, Math.ceil(stockRestant / Math.max(1, conservation - 1)));
       alerteRotation = true;
     }
   }
-  const stockApresDemain = Math.max(0, stock - recommandation);
-  return { stock, venteRef, conservation, recommandation, alerteRotation, joursAvantRupture, stockApresDemain };
+  const stockApresDemain = Math.max(0, stockRestant - recommandation);
+  return { stockTotal, miseEnRayon, stockRestant, venteRef, conservation, recommandation, alerteRotation, joursAvantRupture, stockApresDemain };
 }
 
 function addStockEntry() {
@@ -758,10 +762,11 @@ function render() {
       </div>
       ${r ? `
       <div class="analysis">
+        <div class="note">Stock en réserve après la sortie d'aujourd'hui (${entry.stock} − ${entry.miseEnRayon}) : <b>${r.stockRestant} unité(s)</b></div>
         <div class="title" style="color:${r.alerteRotation ? "var(--warn)" : "var(--ok)"};">À mettre en rayon demain : ${r.recommandation} unité(s)</div>
         ${r.alerteRotation
           ? `<div class="note warn-text">Au rythme de vente habituel, ce stock tiendrait plus longtemps que sa conservation — recommandation augmentée pour accélérer l'écoulement et éviter la démarque.</div>`
-          : r.venteRef !== null ? `<div class="note">Basé sur ${r.venteRef} vente(s)/jour, avec une petite marge de présentation. Stock restant après : ${r.stockApresDemain} unité(s)${r.joursAvantRupture !== null ? `, soit environ ${r.joursAvantRupture} j avant rupture au rythme actuel.` : "."}</div>` : `<div class="note">Aucun rythme de vente connu — recommandation = tout le stock restant.</div>`}
+          : r.venteRef !== null ? `<div class="note">Basé sur ${r.venteRef} vente(s)/jour, avec une petite marge de présentation. Stock en réserve après : ${r.stockApresDemain} unité(s)${r.joursAvantRupture !== null ? `, soit environ ${r.joursAvantRupture} j avant rupture au rythme actuel.` : "."}</div>` : `<div class="note">Aucun rythme de vente connu — recommandation = tout le stock restant.</div>`}
       </div>` : ""}
       <div class="row no-print" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
         ${historique.map(h => `<span class="meta-tag">${h.date} : stock ${h.stock}, rayon ${h.miseEnRayon}</span>`).join("")}
