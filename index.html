@@ -74,6 +74,7 @@
   .stat-block .stat-val { font-size: 14px; font-weight: 700; }
   .old-price { font-size: 11px; text-decoration: line-through; color: var(--muted); font-weight: 500; margin-right: 3px; }
   .note { font-size: 12.5px; color: var(--muted); }
+  .meta-tag { font-size: 10.5px; font-weight: 600; padding: 2px 7px; border-radius: 10px; background: rgba(0,0,0,.05); color: var(--muted); border: 1px solid var(--border); }
   .analysis { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 12.5px; }
   .analysis .title { font-weight: 700; font-size: 12.5px; margin-bottom: 3px; }
   .warn-text { color: var(--warn); }
@@ -90,6 +91,7 @@
 <script>
 const STORAGE_KEY = "promo_products_v1";
 const SAFETY_KEY = "promo_safety_margin_v1";
+const STOCK_KEY = "promo_stock_log_v1";
 
 // Réutilise la même table de référence conservation que le comparateur de prix.
 // Températures alignées sur les recommandations professionnelles CTIFL (Centre
@@ -160,6 +162,7 @@ let safetyMargin = localStorage.getItem(SAFETY_KEY) || "15";
 let objectifRentabilite = localStorage.getItem("promo_objectif_rentabilite_v1") || "15";
 let editingId = null;
 let calendarWeekOffset = 0;
+let stockLog = JSON.parse(localStorage.getItem(STOCK_KEY) || "[]");
 
 // Synchronisation cloud (Firebase Firestore) — même principe que le comparateur de prix.
 let firebaseConfig = JSON.parse(localStorage.getItem("promo_firebase_config_v1") || "null");
@@ -187,7 +190,9 @@ function pullFromCloud() {
       if (Array.isArray(data.products)) products = data.products;
       if (data.safetyMargin) safetyMargin = data.safetyMargin;
       if (data.objectifRentabilite) objectifRentabilite = data.objectifRentabilite;
+      if (Array.isArray(data.stockLog)) stockLog = data.stockLog;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+      localStorage.setItem(STOCK_KEY, JSON.stringify(stockLog));
     }
     syncStatus = "ok";
     render();
@@ -197,7 +202,7 @@ function pushToCloud() {
   if (!initFirebase()) return;
   syncStatus = "syncing";
   fbDb.collection("gestion_promos").doc(syncId).set({
-    products, safetyMargin, objectifRentabilite, updatedAt: new Date().toISOString(),
+    products, safetyMargin, objectifRentabilite, stockLog, updatedAt: new Date().toISOString(),
   }).then(() => { syncStatus = "ok"; render(); }).catch(() => { syncStatus = "error"; render(); });
 }
 function configureSync() {
@@ -226,6 +231,7 @@ function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
   localStorage.setItem(SAFETY_KEY, safetyMargin);
   localStorage.setItem("promo_objectif_rentabilite_v1", objectifRentabilite);
+  localStorage.setItem(STOCK_KEY, JSON.stringify(stockLog));
   if (firebaseConfig && syncId) pushToCloud();
 }
 
@@ -246,27 +252,27 @@ function optionsHtml(list, selectedValue) {
   return list.map(o => `<option value="${o}" ${o === selectedValue ? "selected" : ""}>${o}</option>`).join("")
     + `<option value="__autre__" ${selectedValue === "__autre__" ? "selected" : ""}>Autre…</option>`;
 }
-function nameFieldHtml(currentName) {
+function nameFieldHtml(prefix, currentName) {
   const inList = currentName && PRODUITS_NOMS.includes(currentName);
   const selectVal = currentName ? (inList ? currentName : "__autre__") : "";
   const customVal = currentName && !inList ? currentName : "";
   return `<div class="field">
     <label class="small">Nom du produit</label>
-    <select id="f-name-select" onchange="onNameSelectChange(this)">
+    <select id="${prefix}-name-select" onchange="onNameSelectChange(this, '${prefix}-name-custom')">
       <option value="" ${selectVal === "" ? "selected" : ""}>—</option>
       ${optionsHtml(PRODUITS_NOMS, selectVal)}
     </select>
-    <input type="text" id="f-name-custom" value="${customVal}" placeholder="Préciser le nom du produit" style="display:${customVal ? "block" : "none"};margin-top:6px;" />
+    <input type="text" id="${prefix}-name-custom" value="${customVal}" placeholder="Préciser le nom du produit" style="display:${customVal ? "block" : "none"};margin-top:6px;" />
   </div>`;
 }
-function onNameSelectChange(selectEl) {
-  const custom = document.getElementById("f-name-custom");
+function onNameSelectChange(selectEl, customId) {
+  const custom = document.getElementById(customId);
   custom.style.display = selectEl.value === "__autre__" ? "block" : "none";
   if (selectEl.value !== "__autre__") custom.value = "";
 }
-function selectedName() {
-  const sel = val("f-name-select");
-  return sel === "__autre__" ? val("f-name-custom").trim() : sel;
+function selectedName(prefix) {
+  const sel = val(`${prefix}-name-select`);
+  return sel === "__autre__" ? val(`${prefix}-name-custom`).trim() : sel;
 }
 
 function addDays(dateStr, n) {
@@ -368,6 +374,82 @@ function computeCouvertureRentabilite(p, adv) {
   return { volume, joursCouvertureSupp: adv.joursCouvertureSupp, margeUnitPromo, margeUnitNormale, rentabiliteCouverturePromo, rentabiliteCouvertureSiNormal, ecart };
 }
 
+// --- Module réapprovisionnement rayon ---
+// Cherche le rythme de vente le plus pertinent pour un produit donné, en
+// regardant s'il correspond à une promo suivie (en cours/couverture) ou à sa
+// vente normale, pour servir de base à la recommandation du lendemain.
+function findVenteRefForName(name) {
+  const matches = products.filter(p => p.name === name);
+  for (const p of matches) {
+    const adv = computeStockAdvice(p);
+    const s = computeStatus(p, adv);
+    if (s.statut === "cours" || s.statut === "couverture") {
+      const v = num(p.venteJour);
+      if (v !== null && v > 0) return v;
+    }
+  }
+  for (const p of matches) {
+    const v = num(p.venteJourNormal);
+    if (v !== null && v > 0) return v;
+  }
+  return null;
+}
+
+function computeReappro(entry) {
+  const stock = num(entry.stock);
+  if (stock === null || stock < 0) return null;
+  const venteRef = num(entry.venteJourRef);
+  const conservation = PRODUITS_CONSERVATION[entry.name] ? PRODUITS_CONSERVATION[entry.name].jours : null;
+
+  let recommandation, alerteRotation = false, joursAvantRupture = null;
+  if (venteRef === null || venteRef <= 0) {
+    // Pas de rythme de vente connu : on ne peut que proposer de sortir tout le stock restant.
+    recommandation = stock;
+  } else {
+    recommandation = Math.min(stock, Math.ceil(venteRef * 1.1)); // +10% de présentation
+    joursAvantRupture = Math.floor(stock / venteRef);
+    if (conservation !== null && venteRef > 0 && stock / venteRef > conservation) {
+      // Le stock restant tiendrait plus longtemps que sa conservation : il faut
+      // accélérer l'écoulement pour éviter la démarque, même si ça dépasse le
+      // rythme de vente habituel.
+      recommandation = Math.min(stock, Math.ceil(stock / Math.max(1, conservation - 1)));
+      alerteRotation = true;
+    }
+  }
+  const stockApresDemain = Math.max(0, stock - recommandation);
+  return { stock, venteRef, conservation, recommandation, alerteRotation, joursAvantRupture, stockApresDemain };
+}
+
+function addStockEntry() {
+  const name = selectedName("stock");
+  const stock = val("stock-actuel");
+  const miseEnRayon = val("stock-mise-rayon");
+  if (!name || stock === "") return;
+  const venteRefAuto = findVenteRefForName(name);
+  const venteJourRefInput = val("stock-vente-ref");
+  const venteJourRef = venteJourRefInput !== "" ? venteJourRefInput : (venteRefAuto !== null ? venteRefAuto : "");
+  const today = todayStr();
+  const existingIdx = stockLog.findIndex(e => e.name === name && e.date === today);
+  const entry = { id: existingIdx !== -1 ? stockLog[existingIdx].id : Date.now(), name, date: today, stock, miseEnRayon, venteJourRef };
+  if (existingIdx !== -1) stockLog[existingIdx] = entry; else stockLog.push(entry);
+  save();
+  render();
+}
+
+function deleteStockEntry(id) {
+  stockLog = stockLog.filter(e => e.id !== id);
+  save();
+  render();
+}
+
+function latestStockEntriesByName() {
+  const byName = {};
+  stockLog.forEach(e => {
+    if (!byName[e.name] || e.date > byName[e.name].date) byName[e.name] = e;
+  });
+  return Object.values(byName).sort((a, b) => a.name.localeCompare(b.name, "fr"));
+}
+
 // Bilan réel : une fois la promo terminée et les ventes réelles renseignées,
 // compare le volume et la rentabilité réels au volume prévu.
 function computeBilan(p) {
@@ -385,7 +467,7 @@ function computeBilan(p) {
 }
 
 function addProduct() {
-  const name = selectedName();
+  const name = selectedName("f");
   const achatNormal = val("f-achat-normal");
   const achatPromo = val("f-achat-promo");
   const venteNormal = val("f-vente-normal");
@@ -451,7 +533,7 @@ function downloadBlob(content, filename, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function exportDataJson() {
-  downloadBlob(JSON.stringify({ products, safetyMargin, objectifRentabilite, exportedAt: new Date().toISOString() }, null, 2),
+  downloadBlob(JSON.stringify({ products, safetyMargin, objectifRentabilite, stockLog, exportedAt: new Date().toISOString() }, null, 2),
     `promos-${todayStr()}.json`, "application/json");
 }
 function triggerImport() { document.getElementById("import-file-input").click(); }
@@ -467,6 +549,7 @@ function importDataJson(fileInput) {
       products = data.products;
       if (data.safetyMargin) safetyMargin = data.safetyMargin;
       if (data.objectifRentabilite) objectifRentabilite = data.objectifRentabilite;
+      if (Array.isArray(data.stockLog)) stockLog = data.stockLog;
       save(); render();
     } catch (e) { alert("Fichier invalide."); }
     fileInput.value = "";
@@ -617,7 +700,7 @@ function render() {
   <div class="section-title no-print">${editingProduct ? "Modifier la promo" : "Ajouter une promo"}</div>
   <div class="card no-print" style="margin-bottom:24px;">
     <div class="row" style="flex-direction:column;gap:10px;">
-      ${nameFieldHtml(editingProduct ? editingProduct.name : "")}
+      ${nameFieldHtml("f", editingProduct ? editingProduct.name : "")}
       <div class="row">
         <div class="field"><label class="small">Achat prix normal (€)</label><input type="text" id="f-achat-normal" value="${editingProduct ? editingProduct.achatNormal : ""}" placeholder="0.00" inputmode="decimal" /></div>
         <div class="field"><label class="small">Achat prix promo (€)</label><input type="text" id="f-achat-promo" value="${editingProduct ? editingProduct.achatPromo : ""}" placeholder="0.00" inputmode="decimal" /></div>
@@ -641,6 +724,51 @@ function render() {
     </div>
   </div>
   </div>`;
+
+  // Module réapprovisionnement rayon
+  html += `<div class="section-title">Réapprovisionnement rayon</div>
+  <div class="card no-print" style="margin-bottom:16px;">
+    <div class="row" style="flex-direction:column;gap:10px;">
+      ${nameFieldHtml("stock", "")}
+      <div class="row">
+        <div class="field"><label class="small">Stock total restant (unités)</label><input type="text" id="stock-actuel" placeholder="ex. 12" inputmode="numeric" /></div>
+        <div class="field"><label class="small">Mis en rayon aujourd'hui (unités)</label><input type="text" id="stock-mise-rayon" placeholder="ex. 5" inputmode="numeric" /></div>
+      </div>
+      <div class="field"><label class="small">Vente moyenne/jour (laisser vide pour auto-détecter depuis une promo suivie)</label><input type="text" id="stock-vente-ref" placeholder="auto si dispo" inputmode="numeric" /></div>
+      <button class="btn btn-primary" onclick="addStockEntry()">Enregistrer aujourd'hui</button>
+    </div>
+  </div>`;
+
+  const stockEntries = latestStockEntriesByName();
+  if (stockEntries.length === 0) {
+    html += `<div class="note" style="margin-bottom:22px;">Renseigne un produit ci-dessus pour obtenir une recommandation de mise en rayon pour demain.</div>`;
+  }
+  stockEntries.forEach(entry => {
+    const r = computeReappro(entry);
+    const historique = stockLog.filter(e => e.name === entry.name).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 5);
+    html += `<div class="promo-card ${r && r.alerteRotation ? "status-couverture" : "status-cours"}" style="margin-bottom:10px;">
+      <div class="promo-top">
+        <div style="font-size:14.5px;font-weight:700;">${entry.name}</div>
+        <div class="note">Dernière saisie : ${entry.date}</div>
+      </div>
+      <div class="row" style="flex-wrap:wrap;gap:20px;margin-bottom:6px;">
+        <div class="stat-block"><div class="stat-lbl">Stock restant</div><div class="stat-val">${entry.stock}</div></div>
+        <div class="stat-block"><div class="stat-lbl">Mis en rayon aujourd'hui</div><div class="stat-val">${entry.miseEnRayon}</div></div>
+        <div class="stat-block"><div class="stat-lbl">Vente/jour retenue</div><div class="stat-val">${entry.venteJourRef || "—"}</div></div>
+      </div>
+      ${r ? `
+      <div class="analysis">
+        <div class="title" style="color:${r.alerteRotation ? "var(--warn)" : "var(--ok)"};">À mettre en rayon demain : ${r.recommandation} unité(s)</div>
+        ${r.alerteRotation
+          ? `<div class="note warn-text">Au rythme de vente habituel, ce stock tiendrait plus longtemps que sa conservation — recommandation augmentée pour accélérer l'écoulement et éviter la démarque.</div>`
+          : r.venteRef !== null ? `<div class="note">Basé sur ${r.venteRef} vente(s)/jour, avec une petite marge de présentation. Stock restant après : ${r.stockApresDemain} unité(s)${r.joursAvantRupture !== null ? `, soit environ ${r.joursAvantRupture} j avant rupture au rythme actuel.` : "."}</div>` : `<div class="note">Aucun rythme de vente connu — recommandation = tout le stock restant.</div>`}
+      </div>` : ""}
+      <div class="row no-print" style="gap:6px;margin-top:8px;flex-wrap:wrap;">
+        ${historique.map(h => `<span class="meta-tag">${h.date} : stock ${h.stock}, rayon ${h.miseEnRayon}</span>`).join("")}
+        ${historique.length > 0 ? `<button class="del" onclick="deleteStockEntry(${historique[0].id})">Supprimer la dernière saisie</button>` : ""}
+      </div>
+    </div>`;
+  });
 
   html += `<div class="section-title">Promotions suivies</div>`;
   const actives = enriched.filter(p => p.s.statut !== "finie");
