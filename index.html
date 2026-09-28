@@ -10,6 +10,8 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="default" />
 <meta name="apple-mobile-web-app-title" content="Promos" />
 <link rel="apple-touch-icon" href="icon-192.png" />
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
 <style>
   :root {
     --ink: #1A2433;
@@ -58,11 +60,13 @@
   .reminder-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; font-size: 12.5px; color: var(--tag); background: #FBF3E2; border: 1px solid #EBD9A8; border-radius: 4px; padding: 9px 12px; margin-bottom: 10px; }
   .promo-card { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 4px; padding: 14px 16px; margin-bottom: 10px; background: var(--surface); }
   .promo-card.status-cours { border-left-color: var(--ok); }
+  .promo-card.status-couverture { border-left-color: #1F6E7A; }
   .promo-card.status-venir { border-left-color: var(--accent); }
   .promo-card.status-finie { border-left-color: var(--muted); opacity: 0.7; }
   .promo-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; gap: 10px; }
   .status-chip { font-size: 10.5px; font-weight: 700; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
   .status-chip.cours { background: #E7F0EA; color: var(--ok); }
+  .status-chip.couverture { background: #E1EEF2; color: #1F6E7A; }
   .status-chip.venir { background: #E5EDF3; color: var(--accent); }
   .status-chip.finie { background: #EEE; color: var(--muted); }
   .del { border: 1px solid var(--border); background: var(--surface); color: var(--muted); font-size: 11px; font-weight: 600; cursor: pointer; padding: 4px 9px; border-radius: 4px; }
@@ -153,11 +157,76 @@ const PRODUITS_NOMS = Object.keys(PRODUITS_CONSERVATION).sort((a, b) => a.locale
 
 let products = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null") || [];
 let safetyMargin = localStorage.getItem(SAFETY_KEY) || "15";
+let objectifRentabilite = localStorage.getItem("promo_objectif_rentabilite_v1") || "15";
 let editingId = null;
+let calendarWeekOffset = 0;
+
+// Synchronisation cloud (Firebase Firestore) — même principe que le comparateur de prix.
+let firebaseConfig = JSON.parse(localStorage.getItem("promo_firebase_config_v1") || "null");
+let syncId = localStorage.getItem("promo_sync_id_v1") || "";
+let fbDb = null;
+let syncStatus = "";
+
+function initFirebase() {
+  if (!firebaseConfig || !syncId) return false;
+  if (typeof firebase === "undefined") { syncStatus = "error"; return false; }
+  try {
+    if (!fbDb) {
+      if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
+      fbDb = firebase.firestore();
+    }
+    return true;
+  } catch (e) { syncStatus = "error"; return false; }
+}
+function pullFromCloud() {
+  if (!initFirebase()) return;
+  syncStatus = "syncing";
+  fbDb.collection("gestion_promos").doc(syncId).get().then(doc => {
+    if (doc.exists) {
+      const data = doc.data();
+      if (Array.isArray(data.products)) products = data.products;
+      if (data.safetyMargin) safetyMargin = data.safetyMargin;
+      if (data.objectifRentabilite) objectifRentabilite = data.objectifRentabilite;
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
+    }
+    syncStatus = "ok";
+    render();
+  }).catch(() => { syncStatus = "error"; render(); });
+}
+function pushToCloud() {
+  if (!initFirebase()) return;
+  syncStatus = "syncing";
+  fbDb.collection("gestion_promos").doc(syncId).set({
+    products, safetyMargin, objectifRentabilite, updatedAt: new Date().toISOString(),
+  }).then(() => { syncStatus = "ok"; render(); }).catch(() => { syncStatus = "error"; render(); });
+}
+function configureSync() {
+  const configStr = prompt("Colle ici la configuration Firebase (firebaseConfig, au format JSON) :", firebaseConfig ? JSON.stringify(firebaseConfig) : "");
+  if (configStr === null) return;
+  try { firebaseConfig = JSON.parse(configStr); } catch (e) { alert("JSON invalide."); return; }
+  localStorage.setItem("promo_firebase_config_v1", JSON.stringify(firebaseConfig));
+  const id = prompt("Choisis un code de synchronisation (à retaper à l'identique sur chaque appareil) :", syncId);
+  if (id === null) return;
+  syncId = id.trim();
+  localStorage.setItem("promo_sync_id_v1", syncId);
+  fbDb = null;
+  alert("Synchronisation configurée. Récupération des données...");
+  pullFromCloud();
+}
+function disableSync() {
+  if (!confirm("Désactiver la synchronisation cloud sur cet appareil ? Tes données restent en local.")) return;
+  firebaseConfig = null; syncId = ""; fbDb = null; syncStatus = "";
+  localStorage.removeItem("promo_firebase_config_v1");
+  localStorage.removeItem("promo_sync_id_v1");
+  render();
+}
+function manualSync() { pullFromCloud(); }
 
 function save() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(products));
   localStorage.setItem(SAFETY_KEY, safetyMargin);
+  localStorage.setItem("promo_objectif_rentabilite_v1", objectifRentabilite);
+  if (firebaseConfig && syncId) pushToCloud();
 }
 
 function num(v) {
@@ -200,12 +269,10 @@ function selectedName() {
   return sel === "__autre__" ? val("f-name-custom").trim() : sel;
 }
 
-function computeStatus(p) {
-  const today = todayStr();
-  if (!p.dateDebut || !p.dateFin) return { statut: "inconnu", joursRestants: null };
-  if (today < p.dateDebut) return { statut: "venir", joursRestants: daysBetween(today, p.dateDebut) };
-  if (today > p.dateFin) return { statut: "finie", joursRestants: null };
-  return { statut: "cours", joursRestants: daysBetween(today, p.dateFin) };
+function addDays(dateStr, n) {
+  const d = new Date(dateStr);
+  d.setDate(d.getDate() + n);
+  return toISODate(d);
 }
 
 function computeStockAdvice(p) {
@@ -220,7 +287,101 @@ function computeStockAdvice(p) {
   const stockSupplementaire = Math.floor(joursDisponiblesApresPromo * venteJour * (1 - margeSecurite / 100));
   const total = besoinNormalPromo + stockSupplementaire;
   const risque = conservation <= dureePromo;
-  return { dureePromo, conservation, besoinNormalPromo, stockSupplementaire, total, risque, joursDisponiblesApresPromo };
+
+  // Rythme de vente utilisé pour écouler le stock supplémentaire une fois la promo
+  // officiellement terminée (le rythme "hors promo" si connu, sinon celui de la promo).
+  const venteJourApres = num(p.venteJourNormal) !== null && num(p.venteJourNormal) > 0 ? num(p.venteJourNormal) : venteJour;
+  const joursCouvertureSupp = stockSupplementaire > 0 && venteJourApres > 0 ? Math.ceil(stockSupplementaire / venteJourApres) : 0;
+  const dateFinCouverture = p.dateFin ? addDays(p.dateFin, joursCouvertureSupp) : null;
+
+  return { dureePromo, conservation, besoinNormalPromo, stockSupplementaire, total, risque, joursDisponiblesApresPromo, joursCouvertureSupp, dateFinCouverture };
+}
+
+function computeStatus(p, adv) {
+  const today = todayStr();
+  if (!p.dateDebut || !p.dateFin) return { statut: "inconnu", joursRestants: null };
+  if (today < p.dateDebut) return { statut: "venir", joursRestants: daysBetween(today, p.dateDebut) };
+  if (today <= p.dateFin) return { statut: "cours", joursRestants: daysBetween(today, p.dateFin) };
+  if (adv && adv.dateFinCouverture && today <= adv.dateFinCouverture) {
+    return { statut: "couverture", joursRestants: daysBetween(today, adv.dateFinCouverture) };
+  }
+  return { statut: "finie", joursRestants: null };
+}
+
+// Rentabilité : compare le bénéfice attendu pendant la promo à celui qu'aurait
+// généré la vente normale sur la même période, et calcule le volume nécessaire
+// pour atteindre un objectif de rentabilité supérieure (ex. +15%).
+function computeRentabilite(p) {
+  const achatNormal = num(p.achatNormal);
+  const venteNormal = num(p.venteNormal);
+  const achatPromo = num(p.achatPromo) !== null ? num(p.achatPromo) : achatNormal;
+  const ventePromo = num(p.ventePromo);
+  const venteJourNormal = num(p.venteJourNormal);
+  const venteJourPromo = num(p.venteJour);
+  const dureePromo = p.dateDebut && p.dateFin ? daysBetween(p.dateDebut, p.dateFin) + 1 : null;
+  if (achatNormal === null || venteNormal === null || achatPromo === null || ventePromo === null || dureePromo === null) return null;
+
+  const margeUnitNormale = venteNormal - achatNormal;
+  const margeUnitPromo = ventePromo - achatPromo;
+  const objectifPct = num(objectifRentabilite) ?? 15;
+
+  let rentabiliteNormalePeriode = null, rentabiliteCible = null, rentabilitePromoAttendue = null,
+      volumeTotalNecessaire = null, venteJourNecessaire = null, atteint = null;
+
+  if (venteJourNormal !== null && venteJourNormal >= 0) {
+    rentabiliteNormalePeriode = margeUnitNormale * venteJourNormal * dureePromo;
+    rentabiliteCible = rentabiliteNormalePeriode * (1 + objectifPct / 100);
+    if (margeUnitPromo > 0) {
+      volumeTotalNecessaire = Math.ceil(rentabiliteCible / margeUnitPromo);
+      venteJourNecessaire = Math.ceil(volumeTotalNecessaire / dureePromo);
+    }
+  }
+  if (venteJourPromo !== null && venteJourPromo >= 0) {
+    rentabilitePromoAttendue = margeUnitPromo * venteJourPromo * dureePromo;
+  }
+  if (rentabiliteCible !== null && rentabilitePromoAttendue !== null) {
+    atteint = rentabilitePromoAttendue >= rentabiliteCible;
+  }
+  return { margeUnitNormale, margeUnitPromo, dureePromo, objectifPct, rentabiliteNormalePeriode, rentabiliteCible, rentabilitePromoAttendue, volumeTotalNecessaire, venteJourNecessaire, atteint };
+}
+
+// Rentabilité pendant les jours de couverture (après la fin officielle de la promo,
+// pendant que le stock acheté moins cher permet de garder le prix bas) : compare
+// le bénéfice réellement généré à ce qu'il aurait été si ces mêmes unités avaient
+// été achetées et vendues au prix normal.
+function computeCouvertureRentabilite(p, adv) {
+  if (!adv || !adv.stockSupplementaire || adv.stockSupplementaire <= 0) return null;
+  const achatNormal = num(p.achatNormal);
+  const venteNormal = num(p.venteNormal);
+  const achatPromo = num(p.achatPromo) !== null ? num(p.achatPromo) : achatNormal;
+  const ventePromo = num(p.ventePromo);
+  if (achatNormal === null || venteNormal === null || achatPromo === null || ventePromo === null) return null;
+
+  const margeUnitPromo = ventePromo - achatPromo;
+  const margeUnitNormale = venteNormal - achatNormal;
+  const volume = adv.stockSupplementaire;
+
+  const rentabiliteCouverturePromo = margeUnitPromo * volume;
+  const rentabiliteCouvertureSiNormal = margeUnitNormale * volume;
+  const ecart = rentabiliteCouverturePromo - rentabiliteCouvertureSiNormal;
+
+  return { volume, joursCouvertureSupp: adv.joursCouvertureSupp, margeUnitPromo, margeUnitNormale, rentabiliteCouverturePromo, rentabiliteCouvertureSiNormal, ecart };
+}
+
+// Bilan réel : une fois la promo terminée et les ventes réelles renseignées,
+// compare le volume et la rentabilité réels au volume prévu.
+function computeBilan(p) {
+  const venteReelle = num(p.venteReelle);
+  if (venteReelle === null) return null;
+  const dureePromo = p.dateDebut && p.dateFin ? daysBetween(p.dateDebut, p.dateFin) + 1 : null;
+  const venteJourPromo = num(p.venteJour);
+  const prevu = dureePromo !== null && venteJourPromo !== null ? Math.round(venteJourPromo * dureePromo) : null;
+  const achatPromo = num(p.achatPromo) !== null ? num(p.achatPromo) : num(p.achatNormal);
+  const ventePromo = num(p.ventePromo);
+  const margeUnitPromo = achatPromo !== null && ventePromo !== null ? ventePromo - achatPromo : null;
+  const rentabiliteReelle = margeUnitPromo !== null ? margeUnitPromo * venteReelle : null;
+  const ecartVolumePct = prevu && prevu > 0 ? ((venteReelle - prevu) / prevu) * 100 : null;
+  return { venteReelle, prevu, ecartVolumePct, rentabiliteReelle };
 }
 
 function addProduct() {
@@ -232,13 +393,14 @@ function addProduct() {
   const dateDebut = val("f-date-debut");
   const dateFin = val("f-date-fin");
   const venteJour = val("f-vente-jour");
+  const venteJourNormal = val("f-vente-jour-normal");
   if (!name || !achatNormal || !venteNormal || !ventePromo || !dateDebut || !dateFin) return;
 
-  const data = { name, achatNormal, achatPromo, venteNormal, ventePromo, dateDebut, dateFin, venteJour };
+  const data = { name, achatNormal, achatPromo, venteNormal, ventePromo, dateDebut, dateFin, venteJour, venteJourNormal };
 
   if (editingId !== null) {
     const idx = products.findIndex(p => p.id === editingId);
-    if (idx !== -1) products[idx] = { id: editingId, ...data };
+    if (idx !== -1) products[idx] = { id: editingId, venteReelle: products[idx].venteReelle, ...data };
     editingId = null;
   } else {
     products.push({ id: Date.now(), ...data });
@@ -246,6 +408,26 @@ function addProduct() {
   save();
   render();
 }
+
+function saveVenteReelle(id) {
+  const v = val(`hist-vente-reelle-${id}`);
+  const idx = products.findIndex(p => p.id === id);
+  if (idx !== -1) { products[idx].venteReelle = v; save(); render(); }
+}
+
+function getWeekStart(offset) {
+  const now = new Date();
+  const day = now.getDay();
+  const diffToMonday = (day === 0 ? -6 : 1) - day;
+  const monday = new Date(now);
+  monday.setDate(now.getDate() + diffToMonday + offset * 7);
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+function toISODate(d) {
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+function changeCalendarWeek(delta) { calendarWeekOffset += delta; render(); }
 
 function editProduct(id) {
   editingId = id;
@@ -269,7 +451,7 @@ function downloadBlob(content, filename, mime) {
   setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 function exportDataJson() {
-  downloadBlob(JSON.stringify({ products, safetyMargin, exportedAt: new Date().toISOString() }, null, 2),
+  downloadBlob(JSON.stringify({ products, safetyMargin, objectifRentabilite, exportedAt: new Date().toISOString() }, null, 2),
     `promos-${todayStr()}.json`, "application/json");
 }
 function triggerImport() { document.getElementById("import-file-input").click(); }
@@ -284,6 +466,7 @@ function importDataJson(fileInput) {
       if (!confirm(`Importer ${data.products.length} promo(s) ? Cela remplacera tes données actuelles.`)) return;
       products = data.products;
       if (data.safetyMargin) safetyMargin = data.safetyMargin;
+      if (data.objectifRentabilite) objectifRentabilite = data.objectifRentabilite;
       save(); render();
     } catch (e) { alert("Fichier invalide."); }
     fileInput.value = "";
@@ -292,20 +475,22 @@ function importDataJson(fileInput) {
 }
 function csvField(v) { return `"${String(v == null ? "" : v).replace(/"/g, '""')}"`; }
 function exportCsv() {
-  const rows = [["Produit","Achat normal","Achat promo","Vente normal","Vente promo","Début","Fin","Statut","Vente/jour","Stock supplémentaire conseillé","Total à commander"]];
+  const rows = [["Produit","Achat normal","Achat promo","Vente normal","Vente promo","Début","Fin","Statut","Prix bas jusqu'au","Vente/jour normal","Vente/jour promo","Ventes réelles","Stock supplémentaire conseillé","Total à commander"]];
   products.forEach(p => {
-    const s = computeStatus(p);
     const adv = computeStockAdvice(p);
+    const s = computeStatus(p, adv);
     rows.push([p.name, p.achatNormal, p.achatPromo, p.venteNormal, p.ventePromo, p.dateDebut, p.dateFin,
-      s.statut, p.venteJour, adv ? adv.stockSupplementaire : "", adv ? adv.total : ""]);
+      s.statut, adv ? adv.dateFinCouverture : "", p.venteJourNormal, p.venteJour, p.venteReelle, adv ? adv.stockSupplementaire : "", adv ? adv.total : ""]);
   });
   const csv = "\uFEFF" + rows.map(r => r.map(csvField).join(";")).join("\r\n");
   downloadBlob(csv, `promos-${todayStr()}.csv`, "text/csv;charset=utf-8;");
 }
 function onSafetyChange(v) { safetyMargin = v; save(); render(); }
+function onObjectifChange(v) { objectifRentabilite = v; save(); render(); }
 
 function statusLabel(s) {
   if (s === "cours") return "En cours";
+  if (s === "couverture") return "Prix bas (stock)";
   if (s === "venir") return "À venir";
   if (s === "finie") return "Terminée";
   return "—";
@@ -317,13 +502,18 @@ function render() {
   const selStart = activeId && typeof activeEl.selectionStart === "number" ? activeEl.selectionStart : null;
   const selEnd = activeId && typeof activeEl.selectionEnd === "number" ? activeEl.selectionEnd : null;
 
-  const enriched = products.map(p => ({ ...p, s: computeStatus(p), adv: computeStockAdvice(p) }));
-  const order = { cours: 0, venir: 1, inconnu: 2, finie: 3 };
+  const enriched = products.map(p => {
+    const adv = computeStockAdvice(p);
+    return { ...p, s: computeStatus(p, adv), adv };
+  });
+  const order = { cours: 0, couverture: 1, venir: 2, inconnu: 3, finie: 4 };
   enriched.sort((a, b) => (order[a.s.statut] - order[b.s.statut]) || a.name.localeCompare(b.name, "fr"));
 
   const enCours = enriched.filter(p => p.s.statut === "cours");
+  const enCouverture = enriched.filter(p => p.s.statut === "couverture");
   const aVenir = enriched.filter(p => p.s.statut === "venir");
   const aReappro = enriched.filter(p => p.adv && p.adv.stockSupplementaire > 0);
+  const prixBasMaintenant = enCours.length + enCouverture.length;
 
   let html = "";
 
@@ -338,10 +528,17 @@ function render() {
     </div>
   </div>`;
 
-  html += `<div class="row no-print" style="gap:10px;margin-bottom:16px;flex-wrap:wrap;">
+  html += `<div class="row no-print" style="gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
     <button class="btn" onclick="exportDataJson()">Sauvegarder mes données</button>
     <button class="btn" onclick="triggerImport()">Importer une sauvegarde</button>
     <input type="file" id="import-file-input" accept="application/json" style="display:none;" onchange="importDataJson(this)" />
+  </div>
+  <div class="row no-print" style="gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center;">
+    ${syncId ? `
+      <button class="btn" onclick="manualSync()">Synchroniser maintenant</button>
+      <button class="btn" onclick="disableSync()">Désactiver la synchro</button>
+      <span class="note">${syncStatus === "syncing" ? "Synchronisation..." : syncStatus === "ok" ? "☁️ Synchronisé" : syncStatus === "error" ? "⚠️ Erreur de synchro" : ""}</span>
+    ` : `<button class="btn" onclick="configureSync()">Synchroniser entre appareils</button>`}
   </div>`;
 
   // Rappels
@@ -355,14 +552,64 @@ function render() {
   });
 
   html += `<div class="kpi-grid">
-    <div class="kpi"><div class="kpi-label">Promos en cours</div><div class="kpi-value good">${enCours.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Gamme à prix bas maintenant</div><div class="kpi-value good">${prixBasMaintenant}</div></div>
     <div class="kpi"><div class="kpi-label">Promos à venir</div><div class="kpi-value">${aVenir.length}</div></div>
     <div class="kpi"><div class="kpi-label">À réapprovisionner</div><div class="kpi-value ${aReappro.length > 0 ? "warn" : "good"}">${aReappro.length}</div></div>
   </div>`;
 
-  html += `<div class="row no-print" style="align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+  // Calendrier de la semaine
+  {
+    const monday = getWeekStart(calendarWeekOffset);
+    const days = [];
+    for (let i = 0; i < 7; i++) { const d = new Date(monday); d.setDate(monday.getDate() + i); days.push(d); }
+    const dayLabels = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+    const weekStartIso = toISODate(days[0]);
+    const weekEndIso = toISODate(days[6]);
+
+    html += `<div class="section-title">Calendrier de la semaine</div>
+    <div class="card" style="margin-bottom:22px;">
+      <div class="row no-print" style="justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <button class="btn" onclick="changeCalendarWeek(-1)">◀</button>
+        <div class="note">${weekStartIso} → ${weekEndIso}</div>
+        <button class="btn" onclick="changeCalendarWeek(1)">▶</button>
+      </div>
+      <div style="display:grid;grid-template-columns:90px repeat(7,1fr);gap:4px;margin-bottom:6px;">
+        <div></div>
+        ${days.map((d, i) => `<div style="text-align:center;font-size:10.5px;font-weight:700;color:${toISODate(d) === todayStr() ? "var(--accent)" : "var(--muted)"};">${dayLabels[i]}<br/>${d.getDate()}</div>`).join("")}
+      </div>`;
+
+    const relevant = enriched.filter(p => {
+      const covEnd = p.adv && p.adv.dateFinCouverture ? p.adv.dateFinCouverture : p.dateFin;
+      return p.dateDebut && p.dateFin && covEnd >= weekStartIso && p.dateDebut <= weekEndIso;
+    });
+    if (relevant.length === 0) {
+      html += `<div class="note" style="text-align:center;padding:10px 0;">Aucun produit à prix bas cette semaine.</div>`;
+    }
+    relevant.forEach(p => {
+      const covEnd = p.adv && p.adv.dateFinCouverture ? p.adv.dateFinCouverture : p.dateFin;
+      html += `<div style="display:grid;grid-template-columns:90px repeat(7,1fr);gap:4px;align-items:center;margin-bottom:4px;">
+        <div style="font-size:11.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${p.name}</div>
+        ${days.map(d => {
+          const iso = toISODate(d);
+          const promoActive = iso >= p.dateDebut && iso <= p.dateFin;
+          const couvertureActive = !promoActive && iso > p.dateFin && iso <= covEnd;
+          const color = promoActive ? "var(--ok)" : couvertureActive ? "#1F6E7A" : "var(--border)";
+          const opacity = promoActive ? "1" : couvertureActive ? "0.55" : "0.3";
+          return `<div style="height:16px;border-radius:3px;background:${color};opacity:${opacity};"></div>`;
+        }).join("")}
+      </div>`;
+    });
+    html += `<div class="note" style="margin-top:6px;">Vert plein = promo officielle · Vert clair = prix bas maintenu grâce au stock</div>`;
+    html += `</div>`;
+  }
+
+  html += `<div class="row no-print" style="align-items:center;gap:10px;margin-bottom:8px;flex-wrap:wrap;">
     <label style="font-size:13px;color:var(--muted);">Marge de sécurité stock (%)</label>
     <input type="text" id="safety-input" value="${safetyMargin}" oninput="onSafetyChange(this.value)" style="width:56px;text-align:center;padding:6px 8px;" />
+  </div>
+  <div class="row no-print" style="align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap;">
+    <label style="font-size:13px;color:var(--muted);">Objectif de rentabilité en plus de la vente normale (%)</label>
+    <input type="text" id="objectif-input" value="${objectifRentabilite}" oninput="onObjectifChange(this.value)" style="width:56px;text-align:center;padding:6px 8px;" />
   </div>`;
 
   const editingProduct = editingId !== null ? products.find(p => p.id === editingId) : null;
@@ -383,7 +630,10 @@ function render() {
         <div class="field"><label class="small">Début de la promo</label><input type="date" id="f-date-debut" value="${editingProduct ? editingProduct.dateDebut : ""}" /></div>
         <div class="field"><label class="small">Fin de la promo</label><input type="date" id="f-date-fin" value="${editingProduct ? editingProduct.dateFin : ""}" /></div>
       </div>
-      <div class="field"><label class="small">Vente moyenne par jour (unités)</label><input type="text" id="f-vente-jour" value="${editingProduct ? editingProduct.venteJour : ""}" placeholder="ex. 1" inputmode="numeric" /></div>
+      <div class="row">
+        <div class="field"><label class="small">Vente moyenne/jour hors promo (unités)</label><input type="text" id="f-vente-jour-normal" value="${editingProduct ? editingProduct.venteJourNormal : ""}" placeholder="ex. 1" inputmode="numeric" /></div>
+        <div class="field"><label class="small">Vente/jour attendue pendant la promo (unités)</label><input type="text" id="f-vente-jour" value="${editingProduct ? editingProduct.venteJour : ""}" placeholder="ex. 3" inputmode="numeric" /></div>
+      </div>
       <div class="row">
         <button class="btn btn-primary" onclick="addProduct()">${editingProduct ? "Enregistrer les modifications" : "Ajouter la promo"}</button>
         ${editingProduct ? `<button class="btn" style="flex:0 0 100px;" onclick="cancelEdit()">Annuler</button>` : ""}
@@ -393,12 +643,16 @@ function render() {
   </div>`;
 
   html += `<div class="section-title">Promotions suivies</div>`;
-  if (enriched.length === 0) {
+  const actives = enriched.filter(p => p.s.statut !== "finie");
+  const terminees = enriched.filter(p => p.s.statut === "finie");
+  if (actives.length === 0) {
     html += `<div class="note" style="text-align:center;padding:20px 0;">Ajoute une promo ci-dessus.</div>`;
   }
-  enriched.forEach(p => {
+  actives.forEach(p => {
     const s = p.s;
     const adv = p.adv;
+    const rent = computeRentabilite(p);
+    const rentCouv = computeCouvertureRentabilite(p, adv);
     const conservationRef = PRODUITS_CONSERVATION[p.name];
     const margeNormale = num(p.achatNormal) !== null && num(p.venteNormal) !== null && num(p.venteNormal) > 0
       ? ((num(p.venteNormal) - num(p.achatNormal)) / num(p.venteNormal)) * 100 : null;
@@ -409,7 +663,7 @@ function render() {
       <div class="promo-top">
         <div>
           <div style="font-size:14.5px;font-weight:700;">${p.name}</div>
-          <div class="note">${p.dateDebut} → ${p.dateFin}${s.joursRestants !== null ? ` · ${s.statut === "venir" ? "dans " + s.joursRestants + " j" : s.joursRestants + " j restant(s)"}` : ""}</div>
+          <div class="note">${p.dateDebut} → ${p.dateFin}${s.statut === "couverture" ? ` · prix bas encore ${s.joursRestants} j grâce au stock (jusqu'au ${p.adv.dateFinCouverture})` : s.joursRestants !== null ? ` · ${s.statut === "venir" ? "dans " + s.joursRestants + " j" : s.joursRestants + " j restant(s)"}` : ""}</div>
         </div>
         <div style="display:flex;align-items:center;gap:8px;">
           <span class="status-chip ${s.statut}">${statusLabel(s.statut)}</span>
@@ -439,10 +693,56 @@ function render() {
         ${adv.risque
           ? `<div class="note warn-text">Conservation (${adv.conservation}j) trop courte pour la durée de la promo (${adv.dureePromo}j) — commande juste le nécessaire : ${adv.besoinNormalPromo} unité(s), pas de surplus sûr.</div>`
           : `<div class="note">Commande pour la promo : <b>${adv.besoinNormalPromo}</b> · Stock supplémentaire prudent : <b>${adv.stockSupplementaire}</b> · Total conseillé : <b>${adv.total} unité(s)</b></div>`}
+        ${!adv.risque && adv.stockSupplementaire > 0 ? `<div class="note" style="color:#1F6E7A;">Grâce à ce stock, tu peux garder le prix promo jusqu'au <b>${adv.dateFinCouverture}</b> (${adv.joursCouvertureSupp} j de plus après la fin officielle de la promo) — sans que ça ressorte comme un écart dans Gold, puisque le prix d'achat correspond bien à ce que tu as payé.</div>` : ""}
         ${conservationRef ? `<div class="note">Référence conservation : ${conservationRef.jours}j à ${conservationRef.temp}</div>` : ""}
       </div>` : `<div class="analysis"><div class="note">Renseigne la vente moyenne/jour pour obtenir une recommandation de stock.</div></div>`}
+      ${rentCouv ? `
+      <div class="analysis">
+        <div class="title">Rentabilité pendant la couverture (${rentCouv.joursCouvertureSupp} j, ${rentCouv.volume} unité(s))</div>
+        <div class="note">En gardant le prix promo (${euro(rentCouv.margeUnitPromo)}/unité) : <b>${euro(rentCouv.rentabiliteCouverturePromo)}</b></div>
+        <div class="note">Si acheté et vendu au prix normal (${euro(rentCouv.margeUnitNormale)}/unité) : <b>${euro(rentCouv.rentabiliteCouvertureSiNormal)}</b></div>
+        <div class="note" style="color:${rentCouv.ecart >= 0 ? "var(--ok)" : "var(--warn)"};">${rentCouv.ecart >= 0
+          ? `Tu gagnes ${euro(rentCouv.ecart)} de plus qu'au prix normal, tout en restant compétitif.`
+          : `Ça te coûte ${euro(-rentCouv.ecart)} de marge par rapport au prix normal — c'est le prix à payer pour rester compétitif sur cette période.`}</div>
+      </div>` : ""}
+      ${rent ? `
+      <div class="analysis">
+        <div class="title">Rentabilité (sur ${rent.dureePromo} j)</div>
+        ${rent.rentabiliteNormalePeriode !== null ? `<div class="note">Rentabilité normale sur cette période : <b>${euro(rent.rentabiliteNormalePeriode)}</b> · Objectif avec promo (+${rent.objectifPct}%) : <b>${euro(rent.rentabiliteCible)}</b></div>` : `<div class="note">Renseigne la vente/jour hors promo pour comparer à la rentabilité normale.</div>`}
+        ${rent.rentabilitePromoAttendue !== null ? `<div class="note">Rentabilité attendue avec ton volume promo actuel : <b style="color:${rent.atteint ? "var(--ok)" : "var(--warn)"};">${euro(rent.rentabilitePromoAttendue)}</b> ${rent.atteint === true ? "— objectif atteint" : rent.atteint === false ? "— objectif non atteint" : ""}</div>` : ""}
+        ${rent.volumeTotalNecessaire !== null ? `<div class="note">Volume total nécessaire pour l'objectif : <b>${rent.volumeTotalNecessaire} unité(s)</b> sur la promo, soit environ <b>${rent.venteJourNecessaire}/jour</b>.</div>` : ""}
+      </div>` : ""}
     </div>`;
   });
+
+  if (terminees.length > 0) {
+    html += `<div class="section-title">Historique des promos terminées</div>`;
+    terminees.forEach(p => {
+      const bilan = computeBilan(p);
+      html += `<div class="promo-card status-finie">
+        <div class="promo-top">
+          <div>
+            <div style="font-size:14.5px;font-weight:700;">${p.name}</div>
+            <div class="note">${p.dateDebut} → ${p.dateFin}</div>
+          </div>
+          <div class="row no-print" style="gap:6px;">
+            <button class="del" onclick="editProduct(${p.id})">Modifier</button>
+            <button class="del" onclick="removeProduct(${p.id})">Supprimer</button>
+          </div>
+        </div>
+        <div class="row no-print" style="gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:6px;">
+          <div class="field" style="flex:0 0 160px;"><label class="small">Ventes réelles (unités)</label><input type="text" id="hist-vente-reelle-${p.id}" value="${p.venteReelle || ""}" inputmode="numeric" /></div>
+          <button class="btn" style="flex:0 0 110px;" onclick="saveVenteReelle(${p.id})">Enregistrer</button>
+        </div>
+        ${bilan ? `
+        <div class="analysis">
+          <div class="title">Bilan réel vs prévu</div>
+          <div class="note">Ventes réelles : <b>${bilan.venteReelle}</b>${bilan.prevu !== null ? ` sur ${bilan.prevu} prévues` : ""}${bilan.ecartVolumePct !== null ? ` (${bilan.ecartVolumePct >= 0 ? "+" : ""}${pct(bilan.ecartVolumePct)})` : ""}</div>
+          ${bilan.rentabiliteReelle !== null ? `<div class="note">Rentabilité réelle générée : <b>${euro(bilan.rentabiliteReelle)}</b></div>` : ""}
+        </div>` : `<div class="analysis"><div class="note">Renseigne les ventes réelles pour voir le bilan.</div></div>`}
+      </div>`;
+    });
+  }
 
   document.getElementById("root").innerHTML = html;
 
@@ -456,6 +756,10 @@ function render() {
 }
 
 render();
+
+if (firebaseConfig && syncId) {
+  pullFromCloud();
+}
 
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
